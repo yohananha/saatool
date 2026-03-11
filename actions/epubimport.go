@@ -221,7 +221,10 @@ func (ec *EPubImportAction) processItem(item epub.Itemref, maxWords, maxWordsTol
 
 // ImportEPUBFile imports an EPUB file and returns the resulting Project.
 // It uses default paragraph splitting settings (maxWords=200, maxWordsTolerance=300, stripToAscii=false).
-func ImportEPUBFile(fileName, from, to string) (*translation.Project, error) {
+// If directRead is true the book is imported for reading as-is: source paragraphs are copied
+// to the target unit (same language) so the project appears fully "translated" in the library
+// and no AI translation is needed.
+func ImportEPUBFile(fileName, from, to string, directRead bool) (*translation.Project, error) {
 	log.Printf("Converting EPUB file: %v", fileName)
 
 	rc, err := epub.OpenReader(fileName)
@@ -255,6 +258,16 @@ func ImportEPUBFile(fileName, from, to string) (*translation.Project, error) {
 	}
 
 	project.Normalize()
+
+	// Direct-read mode: mirror source into target so the book is immediately readable
+	// and shows as completed in the library without any translation step.
+	if directRead {
+		project.Target.Language = from
+		copied := make([]translation.Paragraph, len(project.Source.Paragraphs))
+		copy(copied, project.Source.Paragraphs)
+		project.Target.Paragraphs = copied
+	}
+
 	return project, nil
 }
 
