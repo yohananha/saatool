@@ -452,9 +452,13 @@ func (t *Translator) FixTranslation(ctx context.Context, paragraphIndex int) err
 		return fmt.Errorf("failed to create user prompt: %v", err)
 	}
 
-	log.Printf("requesting fix-translation for paragraph %d from %s to %s", paragraphIndex, rc.sourceLang, rc.targetLang)
+	fixModel := config.Options.FixModel
+	if fixModel == "" {
+		fixModel = deepseek.DeepSeekChat
+	}
+	log.Printf("requesting fix-translation for paragraph %d from %s to %s (model: %s)", paragraphIndex, rc.sourceLang, rc.targetLang, fixModel)
 	resp, err := t.callAPI(ctx, &deepseek.ChatCompletionRequest{
-		Model: deepseek.DeepSeekChat,
+		Model: fixModel,
 		Messages: []deepseek.ChatCompletionMessage{
 			{Role: deepseek.ChatMessageRoleSystem, Content: systemPrompt},
 			{Role: deepseek.ChatMessageRoleUser, Content: userPrompt},
@@ -487,6 +491,281 @@ func (t *Translator) FixTranslation(ctx context.Context, paragraphIndex int) err
 		return fmt.Errorf("failed to set translation for paragraph %d: %v", paragraphIndex, err)
 	}
 	t.onTranslated(paragraphIndex, fixed)
+	return nil
+}
+
+// ── Batch translation ─────────────────────────────────────────────────────────
+
+// TranslateBatch translates up to len(indices) paragraphs in a single API call.
+// Already-translated paragraphs are skipped (onTranslated is still fired for them).
+// Falls back to single-paragraph TranslateParagraph when only one index remains.
+func (t *Translator) TranslateBatch(ctx context.Context, indices []int) error {
+	if len(indices) == 0 {
+		return nil
+	}
+
+	sourceLang := t.project.GetSourceLanguage()
+	targetLang := t.project.GetTargetLanguage()
+	if sourceLang == "" || targetLang == "" {
+		return errors.New("source or target language not set")
+	}
+
+	// Filter out already-translated paragraphs.
+	toTranslate := make([]int, 0, len(indices))
+	for _, idx := range indices {
+		if existing, err := t.project.GetTargetParagraph(idx); err == nil && existing.Text != "" {
+			log.Printf("paragraph %d already translated — skipping", idx)
+			t.onTranslated(idx, existing.Text)
+		} else {
+			toTranslate = append(toTranslate, idx)
+		}
+	}
+	if len(toTranslate) == 0 {
+		return nil
+	}
+	if len(toTranslate) == 1 {
+		return t.TranslateParagraph(ctx, toTranslate[0])
+	}
+
+	// Mark all as in-progress; collect IDs for deferred cleanup.
+	var inProgressIDs []string
+	for _, idx := range toTranslate {
+		src, err := t.project.GetSourceParagraph(idx)
+		if err != nil {
+			continue
+		}
+		if err := t.SetTranslationInProgress(src.ID); err != nil {
+			log.Printf("paragraph %d already in progress, skipping", idx)
+			continue
+		}
+		inProgressIDs = append(inProgressIDs, src.ID)
+	}
+	defer func() {
+		for _, id := range inProgressIDs {
+			t.ClearTranslationInProgress(id)
+		}
+	}()
+
+	// Build document: context before first index + all batch source paragraphs.
+	doc := &TranslationDocument{
+		Source: translation.Unit{Language: sourceLang, Paragraphs: make([]translation.Paragraph, 0)},
+		Target: translation.Unit{Language: targetLang, Paragraphs: make([]translation.Paragraph, 0)},
+	}
+	firstIdx := toTranslate[0]
+	maxContext := config.Options.TranslationDocSize - 1
+	contextIndices := make([]int, 0, maxContext)
+	for i := firstIdx - 1; i >= 0 && len(contextIndices) < maxContext; i-- {
+		tgt, err := t.project.GetTargetParagraph(i)
+		if err == nil && tgt.Text != "" {
+			contextIndices = append(contextIndices, i)
+		}
+	}
+	slices.Reverse(contextIndices)
+	for _, i := range contextIndices {
+		t.appendParagraphToDoc(doc, i)
+	}
+	for _, idx := range toTranslate {
+		t.appendParagraphToDoc(doc, idx)
+	}
+
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal batch translation document: %v", err)
+	}
+
+	systemPrompt := t.cachedTranslateSysPrompt
+	if systemPrompt == "" {
+		systemPrompt, err = GetPrompt(
+			`You are a professional translator from '{{.source_lang}}' to '{{.target_lang}}' and a native speaker of both. Translate accurately and preserve the author's style.`,
+			map[string]string{"source_lang": sourceLang, "target_lang": targetLang},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to build system prompt: %v", err)
+		}
+	}
+
+	userPrompt := `I need to provide a JSON object with translated text. The 'source' field contains a list of paragraphs in the source language, and the 'target' field should contain the translated text in the target language. Some of them are already translated — keep those translations consistent. Provide all translations in a JSON object. Here is the JSON object: ` + string(data)
+
+	log.Printf("requesting batch translation for %d paragraphs (%v)", len(toTranslate), toTranslate)
+	resp, err := t.callAPI(ctx, &deepseek.ChatCompletionRequest{
+		Model: deepseek.DeepSeekChat,
+		Messages: []deepseek.ChatCompletionMessage{
+			{Role: deepseek.ChatMessageRoleSystem, Content: systemPrompt},
+			{Role: deepseek.ChatMessageRoleUser, Content: userPrompt},
+		},
+		JSONMode: true,
+	})
+	if resp == nil {
+		return errors.New("received nil response from DeepSeek API")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create chat completion: %v", err)
+	}
+	if len(resp.Choices) == 0 {
+		return errors.New("no choices returned from chat completion")
+	}
+
+	var translationResponse TranslationDocument
+	extractor := deepseek.NewJSONExtractor(nil)
+	if err := extractor.ExtractJSON(resp, &translationResponse); err != nil {
+		return fmt.Errorf("failed to extract JSON from response: %v", err)
+	}
+
+	responseParas := translationResponse.Target.Paragraphs
+	offset := len(responseParas) - len(toTranslate)
+	if offset < 0 {
+		return fmt.Errorf("unexpected batch response: got %d target paragraphs, expected at least %d", len(responseParas), len(toTranslate))
+	}
+	for i, idx := range toTranslate {
+		text := responseParas[offset+i].Text
+		if text == "" {
+			log.Printf("empty translation for paragraph %d in batch — skipping", idx)
+			continue
+		}
+		log.Printf("batch translated paragraph %d: %s", idx, text)
+		if err := t.project.SetTranslation(idx, text); err != nil {
+			log.Printf("failed to set translation for paragraph %d: %v", idx, err)
+			continue
+		}
+		t.onTranslated(idx, text)
+	}
+	return nil
+}
+
+// ProofReadBatch proofreads up to len(indices) already-translated paragraphs in a single API call.
+// Falls back to single-paragraph SimpleProofRead when only one index remains.
+func (t *Translator) ProofReadBatch(ctx context.Context, indices []int) error {
+	if len(indices) == 0 {
+		return nil
+	}
+
+	sourceLang := t.project.GetSourceLanguage()
+	targetLang := t.project.GetTargetLanguage()
+
+	// Only proofread paragraphs that already have a translation.
+	toProofread := make([]int, 0, len(indices))
+	for _, idx := range indices {
+		if existing, err := t.project.GetTargetParagraph(idx); err == nil && existing.Text != "" {
+			toProofread = append(toProofread, idx)
+		}
+	}
+	if len(toProofread) == 0 {
+		return nil
+	}
+	if len(toProofread) == 1 {
+		return t.SimpleProofRead(ctx, toProofread[0])
+	}
+
+	// Mark all as in-progress.
+	var inProgressIDs []string
+	for _, idx := range toProofread {
+		src, err := t.project.GetSourceParagraph(idx)
+		if err != nil {
+			continue
+		}
+		if err := t.SetTranslationInProgress(src.ID); err != nil {
+			log.Printf("paragraph %d already in progress for proofread, skipping", idx)
+			continue
+		}
+		inProgressIDs = append(inProgressIDs, src.ID)
+	}
+	defer func() {
+		for _, id := range inProgressIDs {
+			t.ClearTranslationInProgress(id)
+		}
+	}()
+
+	doc := &TranslationDocument{
+		Source: translation.Unit{Language: sourceLang, Paragraphs: make([]translation.Paragraph, 0)},
+		Target: translation.Unit{Language: targetLang, Paragraphs: make([]translation.Paragraph, 0)},
+	}
+	for _, idx := range toProofread {
+		t.appendParagraphToDoc(doc, idx)
+	}
+
+	jsonData, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal batch proofread document: %v", err)
+	}
+
+	systemPrompt := t.cachedProofreadSysPrompt
+	if systemPrompt == "" {
+		var err2 error
+		systemPrompt, err2 = GetPrompt(
+			`You are a professional proofreader and a native speaker of '{{.target_lang}}'. Proofread the provided text for grammar, spelling, punctuation, and readability.`,
+			map[string]string{"target_lang": targetLang},
+		)
+		if err2 != nil {
+			return fmt.Errorf("failed to build proofread system prompt: %v", err2)
+		}
+	}
+
+	userPrompt, err := GetPrompt(
+		`The provided JSON object contains 'target' paragraphs that need proofreading. They were translated from {{.source_lang}} to '{{.target_lang}}'. The {{.source_lang}} source is provided for reference. Please proofread all 'target' paragraphs and return the corrected text in the same JSON format. Here is the JSON object: {{.data}}`,
+		map[string]string{
+			"source_lang": sourceLang,
+			"target_lang": targetLang,
+			"data":        string(jsonData),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create batch proofread user prompt: %v", err)
+	}
+
+	log.Printf("requesting batch proofread for %d paragraphs (%v)", len(toProofread), toProofread)
+	resp, err := t.callAPI(ctx, &deepseek.ChatCompletionRequest{
+		Model: deepseek.DeepSeekChat,
+		Messages: []deepseek.ChatCompletionMessage{
+			{Role: deepseek.ChatMessageRoleSystem, Content: systemPrompt},
+			{Role: deepseek.ChatMessageRoleUser, Content: userPrompt},
+		},
+		JSONMode: true,
+	})
+	if resp == nil {
+		return errors.New("received nil response from DeepSeek API")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create chat completion: %v", err)
+	}
+	if len(resp.Choices) == 0 {
+		return errors.New("no choices returned from chat completion")
+	}
+
+	var proofResponse TranslationDocument
+	extractor := deepseek.NewJSONExtractor(nil)
+	if err := extractor.ExtractJSON(resp, &proofResponse); err != nil {
+		return fmt.Errorf("failed to extract JSON from batch proofread response: %v", err)
+	}
+
+	if len(proofResponse.Target.Paragraphs) < len(toProofread) {
+		return fmt.Errorf("unexpected batch proofread response: got %d paragraphs, expected %d",
+			len(proofResponse.Target.Paragraphs), len(toProofread))
+	}
+	for i, idx := range toProofread {
+		text := proofResponse.Target.Paragraphs[i].Text
+		if text == "" {
+			log.Printf("empty proofread result for paragraph %d — skipping", idx)
+			continue
+		}
+		log.Printf("batch proofread paragraph %d: %s", idx, text)
+		if err := t.project.SetTranslation(idx, text); err != nil {
+			log.Printf("failed to set proofread translation for paragraph %d: %v", idx, err)
+			continue
+		}
+		t.onTranslated(idx, text)
+	}
+	return nil
+}
+
+// TranslateAndProofReadBatch translates a batch and, if AutoProofread is enabled,
+// proofreads the results — all in two API calls instead of 2×N.
+func (t *Translator) TranslateAndProofReadBatch(ctx context.Context, indices []int) error {
+	if err := t.TranslateBatch(ctx, indices); err != nil {
+		return err
+	}
+	if config.Options.AutoProofread {
+		return t.ProofReadBatch(ctx, indices)
+	}
 	return nil
 }
 

@@ -17,6 +17,14 @@ import (
 	"github.com/dtylman/saatool/config"
 )
 
+// Bookmark represents a user-defined reading bookmark.
+type Bookmark struct {
+	// Index is the paragraph index of the bookmark.
+	Index int `json:"index"`
+	// Note is an optional note attached to the bookmark.
+	Note string `json:"note,omitempty"`
+}
+
 // Character represents a character in a translation project.
 type Character struct {
 	// Name is the name of the character.
@@ -84,6 +92,8 @@ type Project struct {
 	Target Unit `json:"target"`
 	// Prompt is the translation prompt or instructions for the translator.
 	Prompt string `json:"prompt"`
+	// Bookmarks is a list of user-defined reading bookmarks.
+	Bookmarks []Bookmark `json:"bookmarks,omitempty"`
 	// LastSourceView indicates whether the last view was source or target.
 	LastSourceView bool `json:"last_source_view"`
 	// LastParagraphIndex is the index of the last viewed paragraph.
@@ -335,6 +345,40 @@ func (p *Project) DeleteGlossaryEntry(term string) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	delete(p.Glossary, term)
+}
+
+// GetBookmarks returns a copy of all bookmarks (thread-safe).
+func (p *Project) GetBookmarks() []Bookmark {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	result := make([]Bookmark, len(p.Bookmarks))
+	copy(result, p.Bookmarks)
+	return result
+}
+
+// AddBookmark adds or updates a bookmark at the given paragraph index (thread-safe).
+func (p *Project) AddBookmark(index int, note string) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	for i, b := range p.Bookmarks {
+		if b.Index == index {
+			p.Bookmarks[i] = Bookmark{Index: index, Note: note}
+			return
+		}
+	}
+	p.Bookmarks = append(p.Bookmarks, Bookmark{Index: index, Note: note})
+}
+
+// DeleteBookmark removes the bookmark at the given paragraph index (thread-safe).
+func (p *Project) DeleteBookmark(index int) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	for i, b := range p.Bookmarks {
+		if b.Index == index {
+			p.Bookmarks = append(p.Bookmarks[:i], p.Bookmarks[i+1:]...)
+			return
+		}
+	}
 }
 
 // GetGlossaryFormatted returns the glossary as a ready-to-embed prompt string,

@@ -26,6 +26,8 @@ var Options struct {
 	TargetLanguage string `json:"target_language"`
 	//DarkMode enables the dark color theme
 	DarkMode bool `json:"dark_mode"`
+	//FixModel is the DeepSeek model used by the Fix button ("deepseek-chat" or "deepseek-reasoner")
+	FixModel string `json:"fix_model"`
 }
 
 func init() {
@@ -38,6 +40,7 @@ func init() {
 	Options.SourceLanguage = ""
 	Options.TargetLanguage = ""
 	Options.DarkMode = true
+	Options.FixModel = "deepseek-chat"
 }
 
 // LoadOptions loads options from the config file, if it exists. Otherwise, defaults are used.
