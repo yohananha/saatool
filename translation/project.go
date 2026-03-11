@@ -389,7 +389,7 @@ func sanitizeGlossaryText(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
 	// Cap at a sensible length — real glossary entries are never this long.
-	const maxLen = 300
+	const maxLen = 50
 	if len(s) > maxLen {
 		s = s[:maxLen]
 	}
