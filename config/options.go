@@ -71,5 +71,7 @@ func SaveOptions() error {
 
 	configFile := path.Join(ConfigDir(), "options.json")
 	log.Printf("writing options file: %s", configFile)
-	return os.WriteFile(configFile, data, 0644)
+	// 0600 = owner read/write only; protects the DeepSeek API key from other
+	// users on shared systems (was 0644 = world-readable).
+	return os.WriteFile(configFile, data, 0600)
 }

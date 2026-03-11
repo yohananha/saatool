@@ -392,6 +392,9 @@ func (t *Translator) SimpleProofRead(ctx context.Context, paragraphIndex int) er
 		return fmt.Errorf("failed to extract JSON from response: %v", err)
 	}
 
+	if len(translationResponse.Target.Paragraphs) == 0 {
+		return errors.New("received empty paragraph list from DeepSeek API (proofread)")
+	}
 	proofed := translationResponse.Target.Paragraphs[0].Text
 	if proofed == "" {
 		return errors.New("received empty translation from DeepSeek API")
@@ -482,6 +485,9 @@ func (t *Translator) FixTranslation(ctx context.Context, paragraphIndex int) err
 		return fmt.Errorf("failed to extract JSON from response: %v", err)
 	}
 
+	if len(translationResponse.Target.Paragraphs) == 0 {
+		return errors.New("received empty paragraph list from DeepSeek API (fix)")
+	}
 	fixed := translationResponse.Target.Paragraphs[0].Text
 	if fixed == "" {
 		return errors.New("received empty translation from DeepSeek API")
@@ -527,8 +533,12 @@ func (t *Translator) TranslateBatch(ctx context.Context, indices []int) error {
 		return t.TranslateParagraph(ctx, toTranslate[0])
 	}
 
-	// Mark all as in-progress; collect IDs for deferred cleanup.
+	// Mark in-progress only the paragraphs we can successfully claim.
+	// Rebuild toTranslate so it only contains claimed paragraphs — this prevents
+	// a race where a paragraph already being translated by another goroutine
+	// would still get overwritten by this batch's API response.
 	var inProgressIDs []string
+	claimed := make([]int, 0, len(toTranslate))
 	for _, idx := range toTranslate {
 		src, err := t.project.GetSourceParagraph(idx)
 		if err != nil {
@@ -539,6 +549,11 @@ func (t *Translator) TranslateBatch(ctx context.Context, indices []int) error {
 			continue
 		}
 		inProgressIDs = append(inProgressIDs, src.ID)
+		claimed = append(claimed, idx)
+	}
+	toTranslate = claimed
+	if len(toTranslate) == 0 {
+		return nil // all paragraphs were already claimed by another goroutine
 	}
 	defer func() {
 		for _, id := range inProgressIDs {
@@ -656,8 +671,11 @@ func (t *Translator) ProofReadBatch(ctx context.Context, indices []int) error {
 		return t.SimpleProofRead(ctx, toProofread[0])
 	}
 
-	// Mark all as in-progress.
+	// Mark in-progress only paragraphs we successfully claim.
+	// Rebuild toProofread so only claimed paragraphs are sent to the API,
+	// preventing overwrites of translations already being processed elsewhere.
 	var inProgressIDs []string
+	claimed := make([]int, 0, len(toProofread))
 	for _, idx := range toProofread {
 		src, err := t.project.GetSourceParagraph(idx)
 		if err != nil {
@@ -668,6 +686,11 @@ func (t *Translator) ProofReadBatch(ctx context.Context, indices []int) error {
 			continue
 		}
 		inProgressIDs = append(inProgressIDs, src.ID)
+		claimed = append(claimed, idx)
+	}
+	toProofread = claimed
+	if len(toProofread) == 0 {
+		return nil
 	}
 	defer func() {
 		for _, id := range inProgressIDs {
@@ -862,6 +885,9 @@ func (t *Translator) TranslateParagraph(ctx context.Context, paragraphIndex int)
 	}
 	log.Printf("response: %+v", translationResponse)
 
+	if len(translationResponse.Target.Paragraphs) == 0 {
+		return errors.New("received empty paragraph list from DeepSeek API (translate)")
+	}
 	translated := translationResponse.Target.Paragraphs[len(translationResponse.Target.Paragraphs)-1].Text
 	if translated == "" {
 		return errors.New("received empty translation from DeepSeek API")

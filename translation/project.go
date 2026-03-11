@@ -381,6 +381,21 @@ func (p *Project) DeleteBookmark(index int) {
 	}
 }
 
+// sanitizeGlossaryText removes control characters and enforces a maximum length
+// on glossary terms/translations before they are embedded in AI prompts.
+// This reduces the surface area for prompt-injection via crafted project files.
+func sanitizeGlossaryText(s string) string {
+	// Strip newlines/carriage returns that could inject new prompt instructions.
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	// Cap at a sensible length — real glossary entries are never this long.
+	const maxLen = 300
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	return s
+}
+
 // GetGlossaryFormatted returns the glossary as a ready-to-embed prompt string,
 // e.g. '  "butter-beer" → "בירת חמאה"\n'.  Returns "" when the glossary is empty.
 func (p *Project) GetGlossaryFormatted() string {
@@ -391,7 +406,7 @@ func (p *Project) GetGlossaryFormatted() string {
 	}
 	var sb strings.Builder
 	for term, trans := range p.Glossary {
-		fmt.Fprintf(&sb, "  \"%s\" → \"%s\"\n", term, trans)
+		fmt.Fprintf(&sb, "  \"%s\" → \"%s\"\n", sanitizeGlossaryText(term), sanitizeGlossaryText(trans))
 	}
 	return sb.String()
 }
@@ -404,9 +419,21 @@ func DeleteProject(proj *Project) error {
 	if proj.Name == "" {
 		return fmt.Errorf("project name is empty")
 	}
-	fileName := filepath.Join(config.ProjectsDir(), proj.Name)
+	// Use filepath.Base to strip any directory components from the name,
+	// preventing a crafted project.Name like "../../etc/hosts" from escaping
+	// the projects directory.
+	safeName := filepath.Base(proj.Name)
+	if safeName == "." || safeName == ".." {
+		return fmt.Errorf("invalid project name: %q", proj.Name)
+	}
+	fileName := filepath.Join(config.ProjectsDir(), safeName)
 	if filepath.Ext(fileName) != config.ProjectFileExt {
 		fileName += config.ProjectFileExt
+	}
+	// Verify the resolved path is still within ProjectsDir (defense-in-depth).
+	projDir := filepath.Clean(config.ProjectsDir())
+	if rel, err := filepath.Rel(projDir, filepath.Clean(fileName)); err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("invalid project name: would escape projects directory")
 	}
 	log.Printf("deleting project file %s", fileName)
 	err := os.Remove(fileName)
