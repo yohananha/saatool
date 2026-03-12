@@ -45,6 +45,16 @@ type Translator struct {
 // maxRetries is the total number of attempts (1 original + 2 retries) for each API call.
 const maxRetries = 3
 
+// logPreview returns at most maxPreviewChars of s for use in log messages,
+// preventing multi-KB AI responses from flooding the in-memory log.
+func logPreview(s string) string {
+	const maxPreviewChars = 120
+	if len(s) <= maxPreviewChars {
+		return s
+	}
+	return s[:maxPreviewChars] + "…"
+}
+
 // NewTranslator creates a new Translator for the given project.
 // It pre-computes constant per-project values (book-details JSON, all system prompts)
 // so that every subsequent API call can reuse them without recomputation.
@@ -314,7 +324,7 @@ func (t *Translator) GetBookDetails(ctx context.Context) (*BookDetails, error) {
 		return nil, errors.New("no choices returned from chat completion")
 	}
 
-	log.Printf("DeepSeek response: %s", resp.Choices[0].Message.Content)
+	log.Printf("DeepSeek book-details response (len=%d): %s", len(resp.Choices[0].Message.Content), logPreview(resp.Choices[0].Message.Content))
 	var bookResponse BookDetails
 	extractor := deepseek.NewJSONExtractor(nil)
 	if err := extractor.ExtractJSON(resp, &bookResponse); err != nil {
@@ -385,7 +395,7 @@ func (t *Translator) SimpleProofRead(ctx context.Context, paragraphIndex int) er
 		return errors.New("no choices returned from chat completion")
 	}
 
-	log.Printf("DeepSeek proofreading response: %s", resp.Choices[0].Message.Content)
+	log.Printf("DeepSeek proofreading response (len=%d): %s", len(resp.Choices[0].Message.Content), logPreview(resp.Choices[0].Message.Content))
 	var translationResponse TranslationDocument
 	extractor := deepseek.NewJSONExtractor(nil)
 	if err := extractor.ExtractJSON(resp, &translationResponse); err != nil {
@@ -478,7 +488,7 @@ func (t *Translator) FixTranslation(ctx context.Context, paragraphIndex int) err
 		return errors.New("no choices returned from chat completion")
 	}
 
-	log.Printf("DeepSeek fix-translation response: %s", resp.Choices[0].Message.Content)
+	log.Printf("DeepSeek fix-translation response (len=%d): %s", len(resp.Choices[0].Message.Content), logPreview(resp.Choices[0].Message.Content))
 	var translationResponse TranslationDocument
 	extractor := deepseek.NewJSONExtractor(nil)
 	if err := extractor.ExtractJSON(resp, &translationResponse); err != nil {
@@ -503,7 +513,7 @@ func (t *Translator) FixTranslation(ctx context.Context, paragraphIndex int) err
 // ── Batch translation ─────────────────────────────────────────────────────────
 
 // TranslateBatch translates up to len(indices) paragraphs in a single API call.
-// Already-translated paragraphs are skipped (onTranslated is still fired for them).
+// Already-translated paragraphs are silently skipped (no event fired).
 // Falls back to single-paragraph TranslateParagraph when only one index remains.
 func (t *Translator) TranslateBatch(ctx context.Context, indices []int) error {
 	if len(indices) == 0 {
@@ -517,11 +527,14 @@ func (t *Translator) TranslateBatch(ctx context.Context, indices []int) error {
 	}
 
 	// Filter out already-translated paragraphs.
+	// H-5: Do NOT fire onTranslated for already-translated paragraphs here —
+	// the frontend gets their text directly from GetParagraphsBatch, so firing
+	// the event would incorrectly increment the "translated in session" counter
+	// and trigger a premature "Translation complete!" export reminder.
 	toTranslate := make([]int, 0, len(indices))
 	for _, idx := range indices {
 		if existing, err := t.project.GetTargetParagraph(idx); err == nil && existing.Text != "" {
 			log.Printf("paragraph %d already translated — skipping", idx)
-			t.onTranslated(idx, existing.Text)
 		} else {
 			toTranslate = append(toTranslate, idx)
 		}
@@ -814,9 +827,11 @@ func (t *Translator) TranslateParagraph(ctx context.Context, paragraphIndex int)
 	log.Printf("translating paragraph %d", paragraphIndex)
 
 	// ── Change 3: skip if already translated ─────────────────────────────────
+	// H-5: Do NOT fire onTranslated here — the frontend already has the text
+	// from GetParagraphsBatch, so firing the event would spuriously inflate
+	// the session translation counter and cause a premature export reminder.
 	if existing, err := t.project.GetTargetParagraph(paragraphIndex); err == nil && existing.Text != "" {
 		log.Printf("paragraph %d already translated — skipping API call", paragraphIndex)
-		t.onTranslated(paragraphIndex, existing.Text)
 		return nil
 	}
 
@@ -876,15 +891,13 @@ func (t *Translator) TranslateParagraph(ctx context.Context, paragraphIndex int)
 		return errors.New("no choices returned from chat completion")
 	}
 
-	log.Printf("DeepSeek translation response: %s", resp.Choices[0].Message.Content)
+	log.Printf("DeepSeek translation response (len=%d): %s", len(resp.Choices[0].Message.Content), logPreview(resp.Choices[0].Message.Content))
 
 	var translationResponse TranslationDocument
 	extractor := deepseek.NewJSONExtractor(nil)
 	if err := extractor.ExtractJSON(resp, &translationResponse); err != nil {
 		return fmt.Errorf("failed to extract JSON from response: %v", err)
 	}
-	log.Printf("response: %+v", translationResponse)
-
 	if len(translationResponse.Target.Paragraphs) == 0 {
 		return errors.New("received empty paragraph list from DeepSeek API (translate)")
 	}

@@ -94,6 +94,10 @@ type Project struct {
 	Prompt string `json:"prompt"`
 	// Bookmarks is a list of user-defined reading bookmarks.
 	Bookmarks []Bookmark `json:"bookmarks,omitempty"`
+	// Direct indicates the project was imported in direct-read mode (source == target
+	// language, no translation needed). Persisted so callers don't have to infer it
+	// from language equality, which breaks if the user later changes the target lang.
+	Direct bool `json:"direct,omitempty"`
 	// LastSourceView indicates whether the last view was source or target.
 	LastSourceView bool `json:"last_source_view"`
 	// LastParagraphIndex is the index of the last viewed paragraph.

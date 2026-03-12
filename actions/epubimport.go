@@ -262,6 +262,7 @@ func ImportEPUBFile(fileName, from, to string, directRead bool) (*translation.Pr
 	// Direct-read mode: mirror source into target so the book is immediately readable
 	// and shows as completed in the library without any translation step.
 	if directRead {
+		project.Direct = true
 		project.Target.Language = from
 		copied := make([]translation.Paragraph, len(project.Source.Paragraphs))
 		copy(copied, project.Source.Paragraphs)
