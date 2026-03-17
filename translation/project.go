@@ -346,6 +346,14 @@ func (p *Project) SetPosition(view bool, index int) {
 	p.LastParagraphIndex = index
 }
 
+// LastTranslatedIndex returns the highest paragraph index with non-empty target
+// text, or -1 if nothing has been translated yet.
+func (p *Project) LastTranslatedIndex() int {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return p.lastTranslatedIndexLocked()
+}
+
 // lastTranslatedIndexLocked returns the highest paragraph index with non-empty
 // target text, or -1 if none. Caller must hold p.mutex.
 func (p *Project) lastTranslatedIndexLocked() int {
