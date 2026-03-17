@@ -29,6 +29,8 @@ func main() {
 	actions.AddAction(cmd, "import", &actions.EPubImportAction{})
 	actions.AddAction(cmd, "import", &actions.PDFImportAction{})
 	actions.AddAction(cmd, "export", &actions.RTFExportAction{})
+	actions.AddAction(cmd, "export", &actions.EPUBExportAction{})
+	actions.AddAction(cmd, "export", &actions.TextExportAction{})
 	err := cmd.Run(context.Background(), os.Args)
 	if err != nil {
 		fmt.Println("Error:", err)

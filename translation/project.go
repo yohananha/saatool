@@ -49,6 +49,9 @@ type Paragraph struct {
 	// (chapter, section, preface, etc.). Used by the reader to break pages
 	// at chapter boundaries rather than mid-chapter.
 	IsChapterStart bool `json:"chapter_start,omitempty"`
+	// Proofreaded is true when this paragraph's translation has been proofread (by AI or user).
+	// Stored in .spz so we can skip re-proofreading and show state in the UI.
+	Proofreaded bool `json:"proofreaded,omitempty"`
 }
 
 // CalcID calculates a unique ID for the paragraph based on its text.
@@ -277,6 +280,28 @@ func (p *Project) SetTranslation(paragraph int, translated string) error {
 	return nil
 }
 
+// SetProofreaded marks the target paragraph at the given index as proofread. Used when
+// SimpleProofRead or ProofReadBatch (or FixTranslation) has been applied.
+func (p *Project) SetProofreaded(paragraphIndex int) error {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if paragraphIndex < 0 || paragraphIndex >= len(p.Target.Paragraphs) {
+		return fmt.Errorf("paragraph index %d out of range", paragraphIndex)
+	}
+	p.Target.Paragraphs[paragraphIndex].Proofreaded = true
+	return nil
+}
+
+// IsProofreaded returns whether the target paragraph at the given index is marked proofread.
+func (p *Project) IsProofreaded(paragraphIndex int) bool {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if paragraphIndex < 0 || paragraphIndex >= len(p.Target.Paragraphs) {
+		return false
+	}
+	return p.Target.Paragraphs[paragraphIndex].Proofreaded
+}
+
 // IsEmpty checks if the project has no source or target paragraphs.
 func (p *Project) IsEmpty() bool {
 	p.mutex.Lock()
@@ -319,6 +344,31 @@ func (p *Project) SetPosition(view bool, index int) {
 
 	p.LastSourceView = view
 	p.LastParagraphIndex = index
+}
+
+// lastTranslatedIndexLocked returns the highest paragraph index with non-empty
+// target text, or -1 if none. Caller must hold p.mutex.
+func (p *Project) lastTranslatedIndexLocked() int {
+	for i := len(p.Target.Paragraphs) - 1; i >= 0; i-- {
+		if p.Target.Paragraphs[i].Text != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+// EffectiveOpenPosition returns the position to use when opening the book.
+// If no position was ever saved (index 0) but there is translated content,
+// returns the last translated paragraph index and target view; otherwise
+// returns the saved last position and view.
+func (p *Project) EffectiveOpenPosition() (index int, sourceView bool) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	last := p.lastTranslatedIndexLocked()
+	if p.LastParagraphIndex == 0 && last >= 0 {
+		return last, false
+	}
+	return p.LastParagraphIndex, p.LastSourceView
 }
 
 // ── Glossary ──────────────────────────────────────────────────────────────────

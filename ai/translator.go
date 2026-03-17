@@ -336,7 +336,12 @@ func (t *Translator) GetBookDetails(ctx context.Context) (*BookDetails, error) {
 // ── SimpleProofRead ───────────────────────────────────────────────────────────
 
 // SimpleProofRead proofreads the translated text of the specified paragraph.
+// Skips if the paragraph is already marked proofread (no API call).
 func (t *Translator) SimpleProofRead(ctx context.Context, paragraphIndex int) error {
+	if t.project.IsProofreaded(paragraphIndex) {
+		log.Printf("paragraph %d already proofread — skipping", paragraphIndex)
+		return nil
+	}
 	log.Printf("proofreading paragraph %d", paragraphIndex)
 	rc, err := t.newTranslationRequestContext(paragraphIndex)
 	if err != nil {
@@ -413,6 +418,7 @@ func (t *Translator) SimpleProofRead(ctx context.Context, paragraphIndex int) er
 	if err := t.project.SetTranslation(paragraphIndex, proofed); err != nil {
 		return fmt.Errorf("failed to set translation for paragraph %d: %v", paragraphIndex, err)
 	}
+	_ = t.project.SetProofreaded(paragraphIndex)
 	t.onTranslated(paragraphIndex, proofed)
 	return nil
 }
@@ -506,6 +512,7 @@ func (t *Translator) FixTranslation(ctx context.Context, paragraphIndex int) err
 	if err := t.project.SetTranslation(paragraphIndex, fixed); err != nil {
 		return fmt.Errorf("failed to set translation for paragraph %d: %v", paragraphIndex, err)
 	}
+	_ = t.project.SetProofreaded(paragraphIndex)
 	t.onTranslated(paragraphIndex, fixed)
 	return nil
 }
@@ -670,10 +677,10 @@ func (t *Translator) ProofReadBatch(ctx context.Context, indices []int) error {
 	sourceLang := t.project.GetSourceLanguage()
 	targetLang := t.project.GetTargetLanguage()
 
-	// Only proofread paragraphs that already have a translation.
+	// Only proofread paragraphs that have a translation and are not already marked proofread.
 	toProofread := make([]int, 0, len(indices))
 	for _, idx := range indices {
-		if existing, err := t.project.GetTargetParagraph(idx); err == nil && existing.Text != "" {
+		if existing, err := t.project.GetTargetParagraph(idx); err == nil && existing.Text != "" && !t.project.IsProofreaded(idx) {
 			toProofread = append(toProofread, idx)
 		}
 	}
@@ -788,6 +795,7 @@ func (t *Translator) ProofReadBatch(ctx context.Context, indices []int) error {
 			log.Printf("failed to set proofread translation for paragraph %d: %v", idx, err)
 			continue
 		}
+		_ = t.project.SetProofreaded(idx)
 		t.onTranslated(idx, text)
 	}
 	return nil

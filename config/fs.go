@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 
 	"fyne.io/fyne/v2"
 )
@@ -51,9 +52,15 @@ func ConfigDir() string {
 }
 
 // ProjectsDir returns the projects directory path, creating it if necessary.
+// If Options.ProjectsDirectory is set, that path is used; otherwise AppDir()/projects.
 func ProjectsDir() string {
-	appDir := AppDir()
-	projectsDir := path.Join(appDir, "projects")
+	var projectsDir string
+	if Options.ProjectsDirectory != "" {
+		projectsDir = filepath.Clean(Options.ProjectsDirectory)
+	} else {
+		appDir := AppDir()
+		projectsDir = path.Join(appDir, "projects")
+	}
 	err := os.MkdirAll(projectsDir, 0755)
 	if err != nil {
 		log.Fatalf("failed to create projects dir %s: %v", projectsDir, err)

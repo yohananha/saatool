@@ -35,6 +35,8 @@ type TranslationView struct {
 	projectSaver    *ProjectSaver
 	sourceView      bool // true for source language, false for target language
 	paragraphIndex  int  // current paragraph index
+	// translationSem caps concurrent translation API calls (MaxConcurrentTranslations).
+	translationSem chan struct{}
 }
 
 // NewTranslationView creates a new TranslationView for the given project.
@@ -44,14 +46,20 @@ func NewTranslationView(project *translation.Project) (*TranslationView, error) 
 		return nil, fmt.Errorf("failed to create translator: %v", err)
 	}
 
+	cap := config.Options.MaxConcurrentTranslations
+	if cap < 1 {
+		cap = 1
+	}
+	openIndex, openSourceView := project.EffectiveOpenPosition()
 	tv := &TranslationView{
 		project:        project,
 		txt:            widgets.NewBidiText(),
 		lblProgress:    widget.NewLabel(""),
-		sourceView:     project.LastSourceView,
+		sourceView:     openSourceView,
 		paragraphIndex: 0,
 		translator:     translator,
 		projectSaver:   NewProjectSaver(translator, project),
+		translationSem: make(chan struct{}, cap),
 	}
 
 	tv.translator.OnTranslationComplete = tv.onTranslationCompleted
@@ -81,8 +89,8 @@ func NewTranslationView(project *translation.Project) (*TranslationView, error) 
 	panel.OnTapped = tv.onMainPanelTapped
 	tv.view = panel
 
-	// Set the initial paragraph
-	tv.SetParagraph(project.LastParagraphIndex)
+	// Set the initial paragraph (defaults to last translated when saved position is 0)
+	tv.SetParagraph(openIndex)
 
 	tv.updateProgress()
 	tv.updateText()
@@ -242,6 +250,8 @@ func (tv *TranslationView) translateParagraph(paragraph int) error {
 	}
 
 	go func() {
+		tv.translationSem <- struct{}{}
+		defer func() { <-tv.translationSem }()
 		err := tv.translator.Translate(context.Background(), paragraph)
 		if err != nil {
 			log.Printf("translation error (paragraph %v): %v", paragraph, err)
