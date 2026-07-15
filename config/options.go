@@ -28,6 +28,8 @@ var Options struct {
 	DarkMode bool `json:"dark_mode"`
 	//FixModel is the DeepSeek model used by the Fix button ("deepseek-chat" or "deepseek-reasoner")
 	FixModel string `json:"fix_model"`
+	//TranslateModel is the DeepSeek model used for ongoing and whole-book translation ("deepseek-chat" or "deepseek-reasoner")
+	TranslateModel string `json:"translate_model"`
 	//MaxConcurrentTranslations limits how many batch API calls run in parallel
 	MaxConcurrentTranslations int `json:"max_concurrent_translations"`
 	//TranslationBatchSize is the number of paragraphs sent per translation API call (1 = best perceived speed)
@@ -47,6 +49,7 @@ func init() {
 	Options.TargetLanguage = ""
 	Options.DarkMode = true
 	Options.FixModel = "deepseek-chat"
+	Options.TranslateModel = "deepseek-chat"
 	Options.MaxConcurrentTranslations = 4
 	Options.TranslationBatchSize = 1
 }

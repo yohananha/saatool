@@ -621,9 +621,13 @@ func (t *Translator) TranslateBatch(ctx context.Context, indices []int) error {
 
 	userPrompt := `I need to provide a JSON object with translated text. The 'source' field contains a list of paragraphs in the source language, and the 'target' field should contain the translated text in the target language. Some of them are already translated — keep those translations consistent. Provide all translations in a JSON object. Here is the JSON object: ` + string(data)
 
-	log.Printf("requesting batch translation for %d paragraphs (%v)", len(toTranslate), toTranslate)
+	translateModel := config.Options.TranslateModel
+	if translateModel == "" {
+		translateModel = deepseek.DeepSeekChat
+	}
+	log.Printf("requesting batch translation for %d paragraphs (%v) (model: %s)", len(toTranslate), toTranslate, translateModel)
 	resp, err := t.callAPI(ctx, &deepseek.ChatCompletionRequest{
-		Model: deepseek.DeepSeekChat,
+		Model: translateModel,
 		Messages: []deepseek.ChatCompletionMessage{
 			{Role: deepseek.ChatMessageRoleSystem, Content: systemPrompt},
 			{Role: deepseek.ChatMessageRoleUser, Content: userPrompt},
@@ -879,10 +883,14 @@ func (t *Translator) TranslateParagraph(ctx context.Context, paragraphIndex int)
 
 	userPrompt := `I need to provide a JSON object with translated text. The 'source' field contains a list of paragraphs in the source language, and the 'target' field should contain the translated text in the target language. Some of them are already translated, make sure the translation is accurate, if so, keep the same ideas in the new paragraph. Keep translated names and terms consistent. provide the translation in a JSON object. Here is the JSON object: ` + string(data)
 
-	log.Printf("requesting translation for paragraph %d from %s to %s", paragraphIndex, rc.sourceLang, rc.targetLang)
+	translateModel := config.Options.TranslateModel
+	if translateModel == "" {
+		translateModel = deepseek.DeepSeekChat
+	}
+	log.Printf("requesting translation for paragraph %d from %s to %s (model: %s)", paragraphIndex, rc.sourceLang, rc.targetLang, translateModel)
 	// Change 4: use callAPI with automatic retry on failure
 	resp, err := t.callAPI(ctx, &deepseek.ChatCompletionRequest{
-		Model: deepseek.DeepSeekChat,
+		Model: translateModel,
 		Messages: []deepseek.ChatCompletionMessage{
 			{Role: deepseek.ChatMessageRoleSystem, Content: systemPrompt},
 			{Role: deepseek.ChatMessageRoleUser, Content: userPrompt},
