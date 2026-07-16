@@ -12,18 +12,29 @@ import (
 )
 
 type SettingsView struct {
-	entryDeepSeekAPIKey *widget.Entry
-	entryAppSize        *widget.Entry
-	entryTransDocSize   *widget.Entry
-	entryTranslateAhead *widget.Entry
-	entryAutoProofread  *widget.Check
+	entryOpenRouterAPIKey *widget.Entry
+	selectProvider        *widget.Select
+	selectModelType       *widget.Select
+	entryAppSize          *widget.Entry
+	entryTransDocSize     *widget.Entry
+	entryTranslateAhead   *widget.Entry
+	entryAutoProofread    *widget.Check
 
 	view fyne.CanvasObject
 }
 
 func NewSettingsView() *SettingsView {
 	sv := &SettingsView{
-		entryDeepSeekAPIKey: widget.NewEntry(),
+		entryOpenRouterAPIKey: widget.NewEntry(),
+		selectProvider: widget.NewSelect([]string{
+			config.ProviderDeepSeek,
+			config.ProviderAnthropic,
+			config.ProviderOpenAI,
+		}, nil),
+		selectModelType: widget.NewSelect([]string{
+			config.ModelTypeRegular,
+			config.ModelTypeReasoning,
+		}, nil),
 		entryAppSize:        widget.NewEntry(),
 		entryTranslateAhead: widget.NewEntry(),
 		entryTransDocSize:   widget.NewEntry(),
@@ -31,7 +42,9 @@ func NewSettingsView() *SettingsView {
 	}
 
 	sv.view = widget.NewForm(
-		widget.NewFormItem("DeepSeek API Key", sv.entryDeepSeekAPIKey),
+		widget.NewFormItem("OpenRouter API Key", sv.entryOpenRouterAPIKey),
+		widget.NewFormItem("Provider", sv.selectProvider),
+		widget.NewFormItem("Model Type", sv.selectModelType),
 		widget.NewFormItem("App Sizes Factor", sv.entryAppSize),
 		widget.NewFormItem("Translate Ahead", sv.entryTranslateAhead),
 		widget.NewFormItem("Auto Proofread", sv.entryAutoProofread),
@@ -41,8 +54,10 @@ func NewSettingsView() *SettingsView {
 	Main.ClearActions()
 	Main.AddAction("Save", widgets.IconSave, sv.onSaveTapped)
 
-	sv.entryDeepSeekAPIKey.SetText(config.Options.DeepSeekAPIKey)
-	sv.entryDeepSeekAPIKey.Password = true
+	sv.entryOpenRouterAPIKey.SetText(config.Options.OpenRouterAPIKey)
+	sv.entryOpenRouterAPIKey.Password = true
+	sv.selectProvider.SetSelected(config.Options.Provider)
+	sv.selectModelType.SetSelected(config.Options.ModelType)
 	sv.entryTranslateAhead.SetText(fmt.Sprintf("%v", config.Options.TranslateAhead))
 	sv.entryAutoProofread.SetChecked(config.Options.AutoProofread)
 
@@ -66,7 +81,17 @@ func (sv *SettingsView) Load() {
 }
 
 func (sv *SettingsView) onSaveTapped() {
-	config.Options.DeepSeekAPIKey = sv.entryDeepSeekAPIKey.Text
+	config.Options.OpenRouterAPIKey = sv.entryOpenRouterAPIKey.Text
+
+	config.Options.Provider = sv.selectProvider.Selected
+	if config.Options.Provider == "" {
+		config.Options.Provider = config.ProviderDeepSeek
+	}
+	config.Options.ModelType = sv.selectModelType.Selected
+	if config.Options.ModelType == "" {
+		config.Options.ModelType = config.ModelTypeRegular
+	}
+
 	newSize, err := strconv.Atoi(sv.entryAppSize.Text)
 	if err != nil {
 		log.Printf("invalid app size: %v", err)

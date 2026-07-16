@@ -36,14 +36,14 @@ SAATool is an Android application designed for automated translation of EPUB boo
 ### Prerequisites
 
 - Android device (ARM64 or AMD64 architecture)
-- DeepSeek AI API key ([Get one here](https://platform.deepseek.com))
+- OpenRouter API key ([Get one here](https://openrouter.ai)) — used to reach DeepSeek, Anthropic, OpenAI, and other providers
 - EPUB books to translate
 
 ### Installation
 
 1. Download the latest APK from the releases page
 2. Install on your Android device
-3. Configure the DeepSeek API key in Settings
+3. Configure the OpenRouter API key, provider, and model type in Settings
 
 ### Using SAATool
 
@@ -53,12 +53,12 @@ Use the `saatooltool` command-line utility to convert your EPUB or PDF:
 
 **For EPUB files:**
 ```bash
-./saatooltool import epub -i "your_book.epub" -f "english" -o "hebrew" --details --deepseek-api-key "your_key"
+./saatooltool import epub -i "your_book.epub" -f "english" -o "hebrew" --details --openrouter-api-key "your_key"
 ```
 
 **For PDF files:**
 ```bash
-./saatooltool import pdf -i "document.pdf" -f "english" -o "hebrew" -a "Author Name" -t "Document Title" --deepseek-api-key "your_key"
+./saatooltool import pdf -i "document.pdf" -f "english" -o "hebrew" -a "Author Name" -t "Document Title" --openrouter-api-key "your_key"
 ```
 
 **Available options:**
@@ -81,7 +81,7 @@ This creates a `.spz` file ready for import.
 #### Step 3: Configure Settings
 
 1. Go to Settings (gear icon)
-2. Enter your DeepSeek API key
+2. Enter your OpenRouter API key, and choose a Provider (DeepSeek/Anthropic/OpenAI) and Model Type (Regular/Reasoning)
 3. Adjust translation preferences:
    - **Translate Ahead**: Number of paragraphs to pre-translate (default: 6)
    - **Auto Proofread**: Automatically improve translations (recommended: ON)

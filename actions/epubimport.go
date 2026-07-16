@@ -87,9 +87,9 @@ func (ec *EPubImportAction) Action(ctx context.Context, cmd *cli.Command) error 
 	}
 
 	if cmd.Bool("details") {
-		config.Options.DeepSeekAPIKey = cmd.String("deepseek-api-key")
-		if config.Options.DeepSeekAPIKey == "" {
-			return fmt.Errorf("deepseek-api-key is required to get book details")
+		config.Options.OpenRouterAPIKey = cmd.String("openrouter-api-key")
+		if config.Options.OpenRouterAPIKey == "" {
+			return fmt.Errorf("openrouter-api-key is required to get book details")
 		}
 		err = ec.getBookDetails(ctx, cmd)
 		if err != nil {

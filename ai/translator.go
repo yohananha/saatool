@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	deepseek "github.com/cohesion-org/deepseek-go"
+	"github.com/dtylman/saatool/ai/llm"
 	"github.com/dtylman/saatool/config"
 	"github.com/dtylman/saatool/translation"
 )
@@ -22,9 +22,9 @@ type TranslationDocument struct {
 	Target translation.Unit `json:"target"`
 }
 
-// Translator is responsible for translating text using DeepSeek API
+// Translator is responsible for translating text using an LLM provider via OpenRouter
 type Translator struct {
-	client        *deepseek.Client
+	client        *llm.Client
 	project       *translation.Project
 	inTranslation map[string]time.Time
 	mutex         sync.Mutex
@@ -33,13 +33,13 @@ type Translator struct {
 	OnTranslationComplete func(paragraphIndex int, translation string)
 }
 
-// NewTranslator creates a new translator with deep seek api key
+// NewTranslator creates a new translator using the configured LLM provider
 func NewTranslator(project *translation.Project) (*Translator, error) {
 	log.Printf("creating new translator for project: '%s'", project.GetTitle())
 
-	client := deepseek.NewClient(config.Options.DeepSeekAPIKey)
-	if client == nil {
-		return nil, fmt.Errorf("failed to create DeepSeek client")
+	client, err := llm.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LLM client: %w", err)
 	}
 	return &Translator{client: client,
 		project:       project,
@@ -49,7 +49,7 @@ func NewTranslator(project *translation.Project) (*Translator, error) {
 	}, nil
 }
 
-// GetBookDetails retrieves details about a book using the DeepSeek API.
+// GetBookDetails retrieves details about a book using the configured LLM provider.
 func (t *Translator) GetBookDetails(ctx context.Context) (*BookDetails, error) {
 	book := NewBookDetails(t.project)
 
@@ -59,42 +59,24 @@ func (t *Translator) GetBookDetails(ctx context.Context) (*BookDetails, error) {
 	}
 
 	log.Printf("requesting book details for: %s", book.Title)
-	resp, err := t.client.CreateChatCompletion(ctx, &deepseek.ChatCompletionRequest{
-		Model: deepseek.DeepSeekChat,
-		Messages: []deepseek.ChatCompletionMessage{
-			{
-				Role:    deepseek.ChatMessageRoleSystem,
-				Content: "You are a librarian.",
-			},
-			{
-				Role: deepseek.ChatMessageRoleUser,
-				Content: "Provide required in formation about the book. I need to fill in the provided JSON template. " +
-					"Use the title and author fields to search for the book. Correct the existing fields and fill in missing fields. " +
-					"Provide details about the main characters, genre, synopsis, and any other relevant information. " +
-					"Make an effort to fill in all fields. I am most interested in the gender of the main characters, " +
-					"as they are important for the translation effort." +
-					"Return the information in the following JSON format: " + string(bookRequest),
-			},
-		},
-		JSONMode: true,
+	resp, err := t.client.Chat(ctx, llm.ChatRequest{
+		SystemPrompt: "You are a librarian.",
+		UserPrompt: "Provide required in formation about the book. I need to fill in the provided JSON template. " +
+			"Use the title and author fields to search for the book. Correct the existing fields and fill in missing fields. " +
+			"Provide details about the main characters, genre, synopsis, and any other relevant information. " +
+			"Make an effort to fill in all fields. I am most interested in the gender of the main characters, " +
+			"as they are important for the translation effort." +
+			"Return the information in the following JSON format: " + string(bookRequest),
+		JSON: true,
 	})
-
-	if resp == nil && err == nil {
-		return nil, errors.New("received nil response from DeepSeek API")
-	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chat completion: %v", err)
 	}
 
-	if len(resp.Choices) == 0 {
-		return nil, errors.New("no choices returned from chat completion")
-	}
-
-	log.Printf("DeepSeek response: %s", resp.Choices[0].Message.Content)
+	log.Printf("LLM response: %s", resp.Content)
 
 	var bookResponse BookDetails
-	extractor := deepseek.NewJSONExtractor(nil)
-	err = extractor.ExtractJSON(resp, &bookResponse)
+	err = llm.ExtractJSON(resp.Content, &bookResponse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract JSON from response: %v", err)
 	}
@@ -172,7 +154,7 @@ type translationRequestContext struct {
 
 func (t *Translator) newTranslationRequestContext(paragraphIndex int) (*translationRequestContext, error) {
 	if t.client == nil {
-		return nil, errors.New("DeepSeek client is not initialized")
+		return nil, errors.New("LLM client is not initialized")
 	}
 	sourceParagraph, err := t.project.GetSourceParagraph(paragraphIndex)
 	if err != nil {
@@ -232,43 +214,25 @@ func (t *Translator) SimpleProofRead(ctx context.Context, paragraphIndex int) er
 	if err != nil {
 		return fmt.Errorf("failed to create user prompt: %v", err)
 	}
-	request := deepseek.ChatCompletionRequest{
-		Model: deepseek.DeepSeekChat,
-		Messages: []deepseek.ChatCompletionMessage{
-			{
-				Role:    deepseek.ChatMessageRoleSystem,
-				Content: systemPrompt,
-			},
-			{
-				Role:    deepseek.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		JSONMode: true,
-	}
-
 	log.Printf("requesting proofreading for paragraph %d from %s to %s", paragraphIndex, rc.sourceLang, rc.targetLang)
-	resp, err := t.client.CreateChatCompletion(ctx, &request)
-	if resp == nil {
-		return errors.New("received nil response from DeepSeek API")
-	}
+	resp, err := t.client.Chat(ctx, llm.ChatRequest{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		JSON:         true,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create chat completion: %v", err)
 	}
-	if len(resp.Choices) == 0 {
-		return errors.New("no choices returned from chat completion")
-	}
-	log.Printf("DeepSeek proofreading response: %s", resp.Choices[0].Message.Content)
+	log.Printf("LLM proofreading response: %s", resp.Content)
 	var translationResponse TranslationDocument
-	extractor := deepseek.NewJSONExtractor(nil)
-	err = extractor.ExtractJSON(resp, &translationResponse)
+	err = llm.ExtractJSON(resp.Content, &translationResponse)
 	if err != nil {
 		return fmt.Errorf("failed to extract JSON from response: %v", err)
 	}
 	log.Printf("response: %+v", translationResponse)
 	translation := translationResponse.Target.Paragraphs[0].Text
 	if translation == "" {
-		return errors.New("received empty translation from DeepSeek API")
+		return errors.New("received empty translation from LLM")
 	}
 	log.Printf("proofread paragraph %d: %s", paragraphIndex, translation)
 	err = t.project.SetTranslation(paragraphIndex, translation)
@@ -321,46 +285,26 @@ func (t *Translator) FixTranslation(ctx context.Context, paragraphIndex int) err
 		return fmt.Errorf("failed to create user prompt: %v", err)
 	}
 
-	request := deepseek.ChatCompletionRequest{
-		Model: deepseek.DeepSeekChat,
-		Messages: []deepseek.ChatCompletionMessage{
-			{
-				Role:    deepseek.ChatMessageRoleSystem,
-				Content: systemPrompt,
-			},
-			{
-				Role:    deepseek.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		JSONMode: true,
-	}
-
 	log.Printf("requesting fix- translation for paragraph %d from %s to %s", paragraphIndex, rc.sourceLang, rc.targetLang)
-	resp, err := t.client.CreateChatCompletion(ctx, &request)
-	if resp == nil {
-		return errors.New("received nil response from DeepSeek API")
-	}
-
+	resp, err := t.client.Chat(ctx, llm.ChatRequest{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		JSON:         true,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create chat completion: %v", err)
 	}
 
-	if len(resp.Choices) == 0 {
-		return errors.New("no choices returned from chat completion")
-	}
-
-	log.Printf("DeepSeek fix-translation response: %s", resp.Choices[0].Message.Content)
+	log.Printf("LLM fix-translation response: %s", resp.Content)
 	var translationResponse TranslationDocument
-	extractor := deepseek.NewJSONExtractor(nil)
-	err = extractor.ExtractJSON(resp, &translationResponse)
+	err = llm.ExtractJSON(resp.Content, &translationResponse)
 	if err != nil {
 		return fmt.Errorf("failed to extract JSON from response: %v", err)
 	}
 	log.Printf("response: %+v", translationResponse)
 	translation := translationResponse.Target.Paragraphs[0].Text
 	if translation == "" {
-		return errors.New("received empty translation from DeepSeek API")
+		return errors.New("received empty translation from LLM")
 	}
 	log.Printf("fixed translated paragraph %d: %s", paragraphIndex, translation)
 	err = t.project.SetTranslation(paragraphIndex, translation)
@@ -388,7 +332,7 @@ func (t *Translator) Translate(ctx context.Context, paragraphIndex int) error {
 	return nil
 }
 
-// Translate translates a paragraph from the source language to the target language using the DeepSeek API and returns the translated text.
+// TranslateParagraph translates a paragraph from the source language to the target language using the configured LLM provider and returns the translated text.
 func (t *Translator) TranslateParagraph(ctx context.Context, paragraphIndex int) error {
 	log.Printf("translating paragraph %d", paragraphIndex)
 
@@ -428,40 +372,20 @@ func (t *Translator) TranslateParagraph(ctx context.Context, paragraphIndex int)
 
 	userPrompt := `I need to provide a JSON object with translated text. The 'source' field contains a list of paragraphs in the source language, and the 'target' field should contain the translated text in the target language. Some of them are already translated, make sure the translation is accurate, if so, keep the same ideas in the new paragraph. Keep translated names and terms consistent. provide the translation in a JSON object. Here is the JSON object: ` + string(data)
 
-	request := deepseek.ChatCompletionRequest{
-		Model: deepseek.DeepSeekChat,
-		Messages: []deepseek.ChatCompletionMessage{
-			{
-				Role:    deepseek.ChatMessageRoleSystem,
-				Content: systemPrompt,
-			},
-			{
-				Role:    deepseek.ChatMessageRoleUser,
-				Content: userPrompt,
-			},
-		},
-		JSONMode: true,
-	}
-
 	log.Printf("requesting translation for paragraph %d from %s to %s", paragraphIndex, rc.sourceLang, rc.targetLang)
-	resp, err := t.client.CreateChatCompletion(ctx, &request)
-	if resp == nil {
-		return errors.New("received nil response from DeepSeek API")
-	}
-
+	resp, err := t.client.Chat(ctx, llm.ChatRequest{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		JSON:         true,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create chat completion: %v", err)
 	}
 
-	if len(resp.Choices) == 0 {
-		return errors.New("no choices returned from chat completion")
-	}
-
-	log.Printf("DeepSeek translation response: %s", resp.Choices[0].Message.Content)
+	log.Printf("LLM translation response: %s", resp.Content)
 
 	var translationResponse TranslationDocument
-	extractor := deepseek.NewJSONExtractor(nil)
-	err = extractor.ExtractJSON(resp, &translationResponse)
+	err = llm.ExtractJSON(resp.Content, &translationResponse)
 	if err != nil {
 		return fmt.Errorf("failed to extract JSON from response: %v", err)
 	}
@@ -469,7 +393,7 @@ func (t *Translator) TranslateParagraph(ctx context.Context, paragraphIndex int)
 	log.Printf("response: %+v", translationResponse)
 	translation := translationResponse.Target.Paragraphs[len(translationResponse.Target.Paragraphs)-1].Text
 	if translation == "" {
-		return errors.New("received empty translation from DeepSeek API")
+		return errors.New("received empty translation from LLM")
 	}
 	log.Printf("translated paragraph %d: %s", paragraphIndex, translation)
 
