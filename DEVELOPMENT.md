@@ -47,10 +47,10 @@ go build
 ./saatooltool --help
 
 # Import EPUB files
-./saatooltool import epub -i book.epub -f english -o hebrew --deepseek-api-key "your_key"
+./saatooltool import epub -i book.epub -f english -o hebrew --openrouter-api-key "your_key"
 
 # Import PDF files  
-./saatooltool import pdf -i document.pdf -f english -o spanish -a "Author" -t "Title" --deepseek-api-key "your_key"
+./saatooltool import pdf -i document.pdf -f english -o spanish -a "Author" -t "Title" --openrouter-api-key "your_key"
 ```
 
 ### Android APK
@@ -105,7 +105,7 @@ saatool/
 ## Key Technologies
 
 - **[Fyne](https://fyne.io/)**: Cross-platform UI framework for Go
-- **[DeepSeek API](https://platform.deepseek.com)**: AI translation service
+- **[OpenRouter API](https://openrouter.ai)**: unified access to DeepSeek, Anthropic, OpenAI, and other AI translation providers
 - **[GoReader](https://github.com/taylorskalyo/goreader)**: EPUB file processing
 - **[html2text](https://github.com/jaytaylor/html2text)**: HTML to text conversion
 

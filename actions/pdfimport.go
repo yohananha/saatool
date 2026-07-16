@@ -102,7 +102,7 @@ func (a *PDFImportAction) Flags() []cli.Flag {
 		&cli.BoolFlag{
 			Name:    "details",
 			Aliases: []string{"d"},
-			Usage:   "Get book details from DeepSeek",
+			Usage:   "Get book details using the configured LLM provider",
 			Value:   true,
 		},
 		&cli.IntFlag{
@@ -126,7 +126,7 @@ func (a *PDFImportAction) Action(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("input file does not exist: %s", input)
 	}
 
-	config.Options.DeepSeekAPIKey = cmd.String("key")
+	config.Options.OpenRouterAPIKey = cmd.String("key")
 
 	needOCR := cmd.Bool("ocr")
 	if !needOCR {
@@ -227,7 +227,10 @@ func (a *PDFImportAction) processPage(ctx context.Context, cmd *cli.Command, p *
 		})
 	}
 
-	ocrCleaner := ai.NewOCRCleaner()
+	ocrCleaner, err := ai.NewOCRCleaner()
+	if err != nil {
+		return fmt.Errorf("failed to create OCR cleaner: %w", err)
+	}
 	result, err := ocrCleaner.CleanOCR(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("failed to clean OCR text: %w", err)

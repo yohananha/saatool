@@ -8,10 +8,27 @@ import (
 	"path"
 )
 
+// Provider identifies which LLM provider (via OpenRouter) is used for translation.
+const (
+	ProviderDeepSeek  = "deepseek"
+	ProviderAnthropic = "anthropic"
+	ProviderOpenAI    = "openai"
+)
+
+// ModelType selects between a provider's regular and reasoning model.
+const (
+	ModelTypeRegular   = "regular"
+	ModelTypeReasoning = "reasoning"
+)
+
 // Options holds the application configuration options.
 var Options struct {
-	//DeepSeekAPIKey is the API key for DeepSeek service.
-	DeepSeekAPIKey string `json:"deepseek_api_key"`
+	//OpenRouterAPIKey is the API key for the OpenRouter service, used to reach all LLM providers.
+	OpenRouterAPIKey string `json:"openrouter_api_key"`
+	//Provider is the selected LLM provider (see Provider* constants).
+	Provider string `json:"provider"`
+	//ModelType selects between the provider's regular and reasoning model (see ModelType* constants).
+	ModelType string `json:"model_type"`
 	//TranslateAhead is the number of paragraphs to translate ahead.
 	TranslateAhead int `json:"translate_ahead"`
 	//AppSize is the application size factor
@@ -24,7 +41,9 @@ var Options struct {
 
 func init() {
 	// Set default options
-	Options.DeepSeekAPIKey = ""
+	Options.OpenRouterAPIKey = ""
+	Options.Provider = ProviderDeepSeek
+	Options.ModelType = ModelTypeRegular
 	Options.TranslateAhead = 6
 	Options.AppSize = 16
 	Options.TranslationDocSize = 3

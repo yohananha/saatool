@@ -19,9 +19,9 @@ func main() {
 		Commands: []*cli.Command{},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:    "deepseek-api-key",
+				Name:    "openrouter-api-key",
 				Aliases: []string{"key"},
-				Usage:   "API key for DeepSeek.ai",
+				Usage:   "API key for OpenRouter.ai",
 			},
 		},
 		EnableShellCompletion: true,
